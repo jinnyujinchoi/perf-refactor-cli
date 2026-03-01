@@ -1,0 +1,67 @@
+{
+  "name": "as-is",
+  "createdAt": "2026-03-01T05:09:40.153Z",
+  "web": {
+    "config": {
+      "formFactor": "mobile",
+      "throttlingMethod": "simulate",
+      "runs": 3,
+      "aggregation": "median"
+    },
+    "performanceScore": 54,
+    "lcpMs": 139963.31,
+    "interactionMetric": "TBT",
+    "interactionMs": 133,
+    "cls": 0,
+    "opportunitiesTop5": [
+      {
+        "title": "Enable text compression",
+        "estimatedSavingsMs": 24720,
+        "estimatedSavingsBytes": 4163708
+      },
+      {
+        "title": "Serve images in next-gen formats",
+        "estimatedSavingsMs": 24480,
+        "estimatedSavingsBytes": 13972667
+      },
+      {
+        "title": "Minify JavaScript",
+        "estimatedSavingsMs": 14420,
+        "estimatedSavingsBytes": 2520492
+      },
+      {
+        "title": "Reduce unused JavaScript",
+        "estimatedSavingsMs": 12550,
+        "estimatedSavingsBytes": 2198865
+      },
+      {
+        "title": "Properly size images",
+        "estimatedSavingsMs": 7830,
+        "estimatedSavingsBytes": 4228301
+      }
+    ],
+    "rawRuns": [
+      {
+        "performanceScore": 54,
+        "lcpMs": 140045.53139999995,
+        "inpMs": null,
+        "tbtMs": 141,
+        "cls": 0
+      },
+      {
+        "performanceScore": 54,
+        "lcpMs": 135594.06725000002,
+        "inpMs": null,
+        "tbtMs": 133,
+        "cls": 0
+      },
+      {
+        "performanceScore": 54,
+        "lcpMs": 139963.31100000016,
+        "inpMs": null,
+        "tbtMs": 133,
+        "cls": 0
+      }
+    ]
+  }
+}
