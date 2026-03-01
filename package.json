@@ -1,0 +1,30 @@
+{
+  "name": "perf-refactor-cli",
+  "version": "0.1.0",
+  "description": "Web(Lighthouse) + App(RN) performance measure/optimize/report CLI",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "perf-refactor-cli": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "cli",
+    "performance",
+    "lighthouse",
+    "react-native"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.66.0",
+    "chalk": "^5.4.1",
+    "commander": "^14.0.1",
+    "lighthouse": "^12.8.2",
+    "md-to-pdf": "^5.2.4",
+    "ora": "^8.2.0",
+    "zod": "^3.24.2"
+  }
+}
