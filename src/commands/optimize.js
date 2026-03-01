@@ -23,6 +23,18 @@ const OptimizeResponseSchema = z.object({
     }),
   ),
   risks: z.array(z.string()),
+  estimatedMetrics: z.object({
+    web: z.object({
+      performanceScore: z.number().nullable(),
+      lcpMs: z.number().nullable(),
+      interactionMs: z.number().nullable(),
+      cls: z.number().nullable(),
+    }).nullable(),
+    rn: z.object({
+      jsBundleSize: z.number().nullable(),
+      assetsSize: z.number().nullable(),
+    }).nullable(),
+  }),
 });
 
 export function registerOptimizeCommand(program) {
@@ -61,6 +73,7 @@ export function registerOptimizeCommand(program) {
 
         let finalPatches = [];
         let finalRisks = planResult.risks;
+        let finalEstimatedMetrics = planResult.estimatedMetrics;
 
         if (shouldGeneratePatches) {
           spinner.start('Generating patch suggestions...');
@@ -75,6 +88,7 @@ export function registerOptimizeCommand(program) {
           const patchResult = OptimizeResponseSchema.parse(patchPayload);
           finalPatches = patchResult.patches;
           finalRisks = uniqueStrings([...planResult.risks, ...patchResult.risks]);
+          finalEstimatedMetrics = patchResult.estimatedMetrics ?? planResult.estimatedMetrics;
 
           const patchesDir = path.resolve('results', `${options.name}-patches`);
           await fs.mkdir(patchesDir, { recursive: true });
@@ -96,6 +110,7 @@ export function registerOptimizeCommand(program) {
           },
           plan: planResult.plan,
           risks: finalRisks,
+          estimatedMetrics: finalEstimatedMetrics,
         };
 
         if (finalPatches.length > 0) {
@@ -123,7 +138,7 @@ async function requestOptimizeJson(apiKey, params) {
     'You are an expert frontend performance optimization assistant.',
     '반드시 JSON만 응답, 마크다운 코드블록 없이 순수 JSON.',
     'Output must match this exact schema:',
-    '{"plan":[{"title":"string","rationale":"string","targetMetrics":["string"]}],"patches":[{"file":"string","diff":"string"}],"risks":["string"]}',
+    '{"plan":[{"title":"string","rationale":"string","targetMetrics":["string"]}],"patches":[{"file":"string","diff":"string"}],"risks":["string"],"estimatedMetrics":{"web":{"performanceScore":"number|null","lcpMs":"number|null","interactionMs":"number|null","cls":"number|null"},"rn":{"jsBundleSize":"number|null","assetsSize":"number|null"}}}',
   ].join('\n');
 
   const modeInstruction =
@@ -146,6 +161,7 @@ async function requestOptimizeJson(apiKey, params) {
       'Do not include explanations outside JSON.',
       'targetMetrics should reference measurable metrics like LCP/INP/TBT/CLS/Score/BundleSize/AssetsSize.',
       'Patch diffs must be unified diff format when patches are present.',
+      'Always include estimatedMetrics in the response JSON.',
     ],
   };
 
