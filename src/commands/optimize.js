@@ -5,6 +5,12 @@ import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
 import ora from 'ora';
 import { z } from 'zod';
+import { collectProjectContext } from '../utils/context.js';
+import {
+  buildVersionedResultTarget,
+  resolveProjectName,
+  resolveResultJsonFile,
+} from '../utils/naming.js';
 
 const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
@@ -44,6 +50,8 @@ export function registerOptimizeCommand(program) {
     .requiredOption('--from <name>', 'Baseline measure name (e.g. as-is)')
     .requiredOption('--name <name>', 'Target result name (e.g. to-be)')
     .requiredOption('--prompt <text>', 'Optimization prompt')
+    .option('--project <name>', 'Project name for versioned result files')
+    .option('--source <path>', 'Project source root path (default: process.cwd())')
     .option('--yes', 'Apply non-interactive defaults')
     .action(async (options) => {
       const spinner = ora('Preparing optimize workflow...').start();
@@ -54,15 +62,33 @@ export function registerOptimizeCommand(program) {
           throw new Error('GEMINI_API_KEY is not set.');
         }
 
-        const fromPath = path.resolve('results', `${options.from}.json`);
-        const baseline = await readJsonFile(fromPath);
+        const resultsDir = path.resolve('results');
+        const projectName = await resolveProjectName(options.project);
+        const fromTarget = await resolveResultJsonFile({
+          resultsDir,
+          inputName: options.from,
+          projectName,
+        });
+        const baseline = await readJsonFile(fromTarget.filePath);
+        const outputTarget = await buildVersionedResultTarget({
+          resultsDir,
+          projectName,
+          resultName: options.name,
+        });
+        spinner.text = 'Collecting source code context...';
+        const contextResult = await collectProjectContext(options.source);
+        if (contextResult.warning) {
+          spinner.warn(chalk.yellow(contextResult.warning));
+          spinner.start('Preparing optimize workflow...');
+        }
 
         spinner.text = 'Generating optimization plan...';
         const planPayload = await requestOptimizeJson(apiKey, {
           mode: 'plan',
           userPrompt: options.prompt,
-          fromName: options.from,
+          fromName: fromTarget.baseName,
           baseline,
+          projectContext: contextResult.projectContext,
         });
         const planResult = OptimizeResponseSchema.parse(planPayload);
 
@@ -80,9 +106,10 @@ export function registerOptimizeCommand(program) {
           const patchPayload = await requestOptimizeJson(apiKey, {
             mode: 'patch',
             userPrompt: options.prompt,
-            fromName: options.from,
+            fromName: fromTarget.baseName,
             baseline,
             plan: planResult.plan,
+            projectContext: contextResult.projectContext,
           });
 
           const patchResult = OptimizeResponseSchema.parse(patchPayload);
@@ -90,18 +117,19 @@ export function registerOptimizeCommand(program) {
           finalRisks = uniqueStrings([...planResult.risks, ...patchResult.risks]);
           finalEstimatedMetrics = patchResult.estimatedMetrics ?? planResult.estimatedMetrics;
 
-          const patchesDir = path.resolve('results', `${options.name}-patches`);
-          await fs.mkdir(patchesDir, { recursive: true });
-          await savePatchFiles(patchesDir, finalPatches);
-          spinner.succeed(`Patch files saved: ${patchesDir}`);
+          await fs.mkdir(outputTarget.patchesDir, { recursive: true });
+          await savePatchFiles(outputTarget.patchesDir, finalPatches);
+          spinner.succeed(`Patch files saved: ${outputTarget.patchesDir}`);
         } else {
           spinner.info('Patch generation skipped by user choice.');
         }
 
-        const resultPath = path.resolve('results', `${options.name}.json`);
         const outputJson = {
           name: options.name,
-          from: options.from,
+          project: projectName,
+          fileName: outputTarget.fileName,
+          from: fromTarget.baseName,
+          fromFileName: fromTarget.fileName,
           createdAt: new Date().toISOString(),
           prompt: options.prompt,
           asIs: {
@@ -121,10 +149,10 @@ export function registerOptimizeCommand(program) {
           }));
         }
 
-        await fs.mkdir(path.dirname(resultPath), { recursive: true });
-        await fs.writeFile(resultPath, JSON.stringify(outputJson, null, 2), 'utf8');
+        await fs.mkdir(path.dirname(outputTarget.filePath), { recursive: true });
+        await fs.writeFile(outputTarget.filePath, JSON.stringify(outputJson, null, 2), 'utf8');
 
-        console.log(chalk.green(`Saved optimize result: ${resultPath}`));
+        console.log(chalk.green(`Saved optimize result: ${outputTarget.filePath}`));
       } catch (error) {
         spinner.fail('Optimize failed');
         console.error(chalk.red(error instanceof Error ? error.message : String(error)));
@@ -153,6 +181,11 @@ async function requestOptimizeJson(apiKey, params) {
     baselineMetrics: {
       web: params.baseline.web ?? null,
       rn: params.baseline.rn ?? null,
+    },
+    projectContext: params.projectContext ?? {
+      rootDir: '',
+      framework: 'unknown',
+      files: [],
     },
     existingPlan: params.plan ?? null,
     rules: [

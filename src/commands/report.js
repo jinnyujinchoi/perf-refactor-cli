@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
 import { mdToPdf } from 'md-to-pdf';
+import { resolveProjectName, resolveResultJsonFile } from '../utils/naming.js';
 
 export function registerReportCommand(program) {
   program
@@ -9,20 +10,33 @@ export function registerReportCommand(program) {
     .description('Generate markdown/pdf comparison report')
     .requiredOption('--from <name>', 'Source measure name (e.g. as-is)')
     .requiredOption('--to <name>', 'Target measure name (e.g. to-be)')
+    .option('--project <name>', 'Project name for resolving result files')
     .option('--format <types>', 'Output formats (comma separated)', 'md,pdf')
     .action(async (options) => {
       try {
-        const fromPath = path.resolve('results', `${options.from}.json`);
-        const toPath = path.resolve('results', `${options.to}.json`);
+        const resultsDir = path.resolve('results');
+        const projectName = await resolveProjectName(options.project);
+        const fromTarget = await resolveResultJsonFile({
+          resultsDir,
+          inputName: options.from,
+          projectName,
+        });
+        const toTarget = await resolveResultJsonFile({
+          resultsDir,
+          inputName: options.to,
+          projectName,
+        });
 
         const [fromResult, toResult] = await Promise.all([
-          readJsonFile(fromPath),
-          readJsonFile(toPath),
+          readJsonFile(fromTarget.filePath),
+          readJsonFile(toTarget.filePath),
         ]);
 
         const markdown = buildReportMarkdown({
-          fromName: options.from,
-          toName: options.to,
+          fromName: fromTarget.baseName,
+          toName: toTarget.baseName,
+          fromFileName: fromTarget.fileName,
+          toFileName: toTarget.fileName,
           fromResult,
           toResult,
         });
@@ -30,7 +44,7 @@ export function registerReportCommand(program) {
         const reportsDir = path.resolve('reports');
         await fs.mkdir(reportsDir, { recursive: true });
 
-        const baseName = `${options.from}-${options.to}`;
+        const baseName = `${fromTarget.baseName}--${toTarget.baseName}`;
         const mdPath = path.join(reportsDir, `${baseName}.md`);
         await fs.writeFile(mdPath, markdown, 'utf8');
         console.log(chalk.green(`Markdown report saved: ${mdPath}`));
@@ -51,7 +65,7 @@ export function registerReportCommand(program) {
     });
 }
 
-function buildReportMarkdown({ fromName, toName, fromResult, toResult }) {
+function buildReportMarkdown({ fromName, toName, fromFileName, toFileName, fromResult, toResult }) {
   const asIsWeb = fromResult?.web ?? toResult?.asIs?.web ?? null;
   const asIsRn = fromResult?.rn ?? toResult?.asIs?.rn ?? null;
   const toBeWeb = toResult?.estimatedMetrics?.web ?? toResult?.web ?? toResult?.toBe?.web ?? null;
@@ -133,8 +147,8 @@ function buildReportMarkdown({ fromName, toName, fromResult, toResult }) {
     '',
     '⚠️ to-be 수치는 AI 추정치이며 실측값이 아닙니다',
     '',
-    `- as-is source: results/${fromName}.json`,
-    `- to-be source: results/${toName}.json`,
+    `- as-is source: results/${fromFileName}`,
+    `- to-be source: results/${toFileName}`,
     `- as-is createdAt: ${asIsCreated}`,
     `- to-be createdAt: ${toBeCreated}`,
     '',
