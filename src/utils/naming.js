@@ -61,6 +61,33 @@ export async function buildVersionedResultTarget({
   };
 }
 
+export async function buildVersionedReportTarget({
+  reportsDir,
+  fromBaseName,
+  toBaseName,
+  now = new Date(),
+}) {
+  const safeFrom = sanitizeSegment(fromBaseName);
+  const safeTo = sanitizeSegment(toBaseName);
+  if (!safeFrom || !safeTo) {
+    throw new Error('Report source names are required.');
+  }
+
+  const reportStem = `${safeFrom}--${safeTo}`;
+  const dateStamp = formatDateStamp(now);
+  const nextVersion = await getNextReportVersion(reportsDir, reportStem, dateStamp);
+  const baseName = `${reportStem}_${dateStamp}_v.${nextVersion}`;
+
+  return {
+    reportStem,
+    dateStamp,
+    version: nextVersion,
+    baseName,
+    mdPath: path.join(reportsDir, `${baseName}.md`),
+    pdfPath: path.join(reportsDir, `${baseName}.pdf`),
+  };
+}
+
 export async function resolveResultJsonFile({ resultsDir, inputName, projectName }) {
   const rawInput = String(inputName ?? '').trim();
   if (!rawInput) {
@@ -167,6 +194,32 @@ async function findLatestVersionedFile(resultsDir, projectName, resultName) {
   });
 
   return matches.at(-1)?.fileName ?? null;
+}
+
+async function getNextReportVersion(reportsDir, reportStem, dateStamp) {
+  await fs.mkdir(reportsDir, { recursive: true });
+  const entries = await fs.readdir(reportsDir, { withFileTypes: true });
+  const pattern = new RegExp(
+    `^${escapeRegex(reportStem)}_${escapeRegex(dateStamp)}_v\\.(\\d+)\\.(md|pdf)$`,
+    'i',
+  );
+
+  let maxVersion = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const match = entry.name.match(pattern);
+    if (!match) {
+      continue;
+    }
+    const version = Number.parseInt(match[1], 10);
+    if (Number.isFinite(version) && version > maxVersion) {
+      maxVersion = version;
+    }
+  }
+
+  return maxVersion + 1;
 }
 
 function stripJsonExtension(fileName) {

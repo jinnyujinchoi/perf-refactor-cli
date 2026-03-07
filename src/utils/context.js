@@ -1,11 +1,12 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-const MAX_TOTAL_BYTES = 100 * 1024;
-const MAX_FILES_WHEN_OVERSIZE = 20;
+const PLAN_MAX_TOTAL_BYTES = 30 * 1024;
+const PLAN_MAX_LINES_PER_FILE = 30;
+const PATCH_MAX_LINES_PER_FILE = 500;
 const ALLOWED_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.css', '.html']);
 
-export async function collectProjectContext(sourceOption) {
+export async function collectPlanProjectContext(sourceOption) {
   const sourceRoot = path.resolve(sourceOption ?? process.cwd());
   const srcDir = path.join(sourceRoot, 'src');
   const rootDir = path.basename(sourceRoot);
@@ -13,30 +14,99 @@ export async function collectProjectContext(sourceOption) {
   const framework = await detectFramework(sourceRoot);
   const filesWithSize = await collectSourceFiles(srcDir);
 
-  let files = filesWithSize;
-  let warning = null;
+  let totalBytes = 0;
+  const includedFiles = [];
+  const excludedFiles = [];
 
-  const totalBytes = filesWithSize.reduce((sum, file) => sum + file.size, 0);
-  if (totalBytes > MAX_TOTAL_BYTES) {
-    files = [...filesWithSize]
-      .sort((a, b) => b.size - a.size)
-      .slice(0, MAX_FILES_WHEN_OVERSIZE);
-    warning =
-      `Project context exceeded 100KB (${totalBytes} bytes). ` +
-      `Only top ${MAX_FILES_WHEN_OVERSIZE} files by size were included.`;
+  for (const file of filesWithSize) {
+    if (isTestFile(file.relativePath)) {
+      continue;
+    }
+
+    const summarizedContent = takeFirstLinesVerbatim(file.content, PLAN_MAX_LINES_PER_FILE);
+    const summarizedBytes = Buffer.byteLength(summarizedContent, 'utf8');
+    if (totalBytes + summarizedBytes > PLAN_MAX_TOTAL_BYTES) {
+      excludedFiles.push(file.relativePath);
+      continue;
+    }
+
+    includedFiles.push({
+      path: file.relativePath,
+      content: summarizedContent,
+    });
+    totalBytes += summarizedBytes;
   }
+
+  const warning = excludedFiles.length > 0
+    ? `Plan context exceeded 30KB. Excluded ${excludedFiles.length} files.`
+    : null;
 
   return {
     sourceRoot,
     projectContext: {
       rootDir,
       framework,
-      files: files.map((file) => ({
-        path: file.relativePath,
-        content: file.content,
-      })),
+      files: includedFiles,
     },
     warning,
+  };
+}
+
+export async function collectPatchProjectContext(sourceOption, targetFiles) {
+  const sourceRoot = path.resolve(sourceOption ?? process.cwd());
+  const rootDir = path.basename(sourceRoot);
+  const framework = await detectFramework(sourceRoot);
+
+  const uniqueTargets = [...new Set((targetFiles ?? []).map((file) => normalizePath(file)).filter(Boolean))];
+  const files = [];
+  const missingFiles = [];
+  const tooLargeFiles = [];
+
+  for (const target of uniqueTargets) {
+    const resolved = resolveTargetFile(sourceRoot, target);
+    if (!resolved) {
+      missingFiles.push(target);
+      continue;
+    }
+
+    let raw;
+    try {
+      raw = await fs.readFile(resolved, 'utf8');
+    } catch {
+      missingFiles.push(target);
+      continue;
+    }
+
+    const isTruncated = countLines(raw) > PATCH_MAX_LINES_PER_FILE;
+    const normalizedPath = normalizePath(path.relative(sourceRoot, resolved));
+    const content = isTruncated
+      ? '// [file too large: manual apply required]'
+      : raw;
+
+    if (isTruncated) {
+      tooLargeFiles.push(normalizedPath);
+    }
+
+    files.push({
+      path: normalizedPath,
+      content,
+      tooLarge: isTruncated,
+    });
+  }
+
+  const warning = missingFiles.length > 0
+    ? `Patch context skipped ${missingFiles.length} unresolved target files.`
+    : null;
+
+  return {
+    sourceRoot,
+    projectContext: {
+      rootDir,
+      framework,
+      files,
+    },
+    warning,
+    tooLargeFiles,
   };
 }
 
@@ -112,6 +182,52 @@ async function walk(sourceRoot, currentDir, files) {
       size,
     });
   }
+}
+
+function resolveTargetFile(sourceRoot, targetPath) {
+  const normalizedTarget = normalizePath(targetPath);
+  if (!normalizedTarget) {
+    return null;
+  }
+
+  const relPath = normalizedTarget.startsWith('src/')
+    ? normalizedTarget
+    : `src/${normalizedTarget.replace(/^\.?\//, '')}`;
+
+  const absolute = path.resolve(sourceRoot, relPath);
+  const normalizedAbsolute = normalizePath(absolute);
+  const normalizedRoot = `${normalizePath(sourceRoot)}/`;
+  if (!normalizedAbsolute.startsWith(normalizedRoot)) {
+    return null;
+  }
+
+  if (!ALLOWED_EXTENSIONS.has(path.extname(absolute).toLowerCase())) {
+    return null;
+  }
+  if (isTestFile(relPath)) {
+    return null;
+  }
+
+  return absolute;
+}
+
+function takeFirstLinesVerbatim(text, maxLines) {
+  // Keep file head exactly as-is (including leading comments and blank lines).
+  const lines = String(text).split('\n');
+  return lines.slice(0, maxLines).join('\n');
+}
+
+function countLines(text) {
+  return String(text).split('\n').length;
+}
+
+function isTestFile(filePath) {
+  const normalized = normalizePath(filePath);
+  return /(^|\/)[^/]*\.(test|spec)\.[^.]+$/i.test(normalized);
+}
+
+function normalizePath(filePath) {
+  return String(filePath ?? '').trim().replaceAll('\\', '/');
 }
 
 async function directoryExists(dirPath) {
