@@ -4,6 +4,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import ora from 'ora';
 import chalk from 'chalk';
+import { buildVersionedResultTarget, resolveProjectName } from '../utils/naming.js';
 
 const LIGHTHOUSE_RUNS = 3;
 
@@ -12,6 +13,7 @@ export function registerMeasureCommand(program) {
     .command('measure')
     .description('Measure Web(Lighthouse) and RN metrics')
     .requiredOption('--name <name>', 'Result name (e.g. as-is)')
+    .option('--project <name>', 'Project name for versioned result files')
     .option('--web <url>', 'Target web URL or local path')
     .option('--rn <path>', 'React Native project path')
     .action(async (options) => {
@@ -24,8 +26,18 @@ export function registerMeasureCommand(program) {
       const spinner = ora('Starting measurements...').start();
 
       try {
+        const resultsDir = path.resolve('results');
+        const projectName = await resolveProjectName(options.project);
+        const outputTarget = await buildVersionedResultTarget({
+          resultsDir,
+          projectName,
+          resultName: options.name,
+        });
+
         const output = {
           name: options.name,
+          project: projectName,
+          fileName: outputTarget.fileName,
           createdAt: new Date().toISOString(),
         };
 
@@ -41,12 +53,10 @@ export function registerMeasureCommand(program) {
           output.rn = await measureRn(rnPath);
         }
 
-        const resultsDir = path.resolve('results');
         await fs.mkdir(resultsDir, { recursive: true });
-        const outputPath = path.join(resultsDir, `${options.name}.json`);
-        await fs.writeFile(outputPath, JSON.stringify(output, null, 2), 'utf8');
+        await fs.writeFile(outputTarget.filePath, JSON.stringify(output, null, 2), 'utf8');
 
-        spinner.succeed(`Measurement complete: ${outputPath}`);
+        spinner.succeed(`Measurement complete: ${outputTarget.filePath}`);
       } catch (error) {
         spinner.fail('Measurement failed');
         console.error(chalk.red(error instanceof Error ? error.message : String(error)));

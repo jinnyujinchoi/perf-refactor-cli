@@ -2,7 +2,11 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
 import { mdToPdf } from 'md-to-pdf';
-import { resolveProjectName, resolveResultJsonFile } from '../utils/naming.js';
+import {
+  buildVersionedReportTarget,
+  resolveProjectName,
+  resolveResultJsonFile,
+} from '../utils/naming.js';
 
 export function registerReportCommand(program) {
   program
@@ -42,21 +46,21 @@ export function registerReportCommand(program) {
         });
 
         const reportsDir = path.resolve('reports');
-        await fs.mkdir(reportsDir, { recursive: true });
-
-        const baseName = `${fromTarget.baseName}--${toTarget.baseName}`;
-        const mdPath = path.join(reportsDir, `${baseName}.md`);
-        await fs.writeFile(mdPath, markdown, 'utf8');
-        console.log(chalk.green(`Markdown report saved: ${mdPath}`));
+        const reportTarget = await buildVersionedReportTarget({
+          reportsDir,
+          fromBaseName: fromTarget.baseName,
+          toBaseName: toTarget.baseName,
+        });
+        await fs.writeFile(reportTarget.mdPath, markdown, 'utf8');
+        console.log(chalk.green(`Markdown report saved: ${reportTarget.mdPath}`));
 
         const formats = parseFormats(options.format);
         if (formats.has('pdf')) {
-          const pdfPath = path.join(reportsDir, `${baseName}.pdf`);
-          const pdfResult = await mdToPdf({ path: mdPath }, { dest: pdfPath });
+          const pdfResult = await mdToPdf({ path: reportTarget.mdPath }, { dest: reportTarget.pdfPath });
           if (!pdfResult?.filename) {
             throw new Error('PDF conversion failed.');
           }
-          console.log(chalk.green(`PDF report saved: ${pdfPath}`));
+          console.log(chalk.green(`PDF report saved: ${reportTarget.pdfPath}`));
         }
       } catch (error) {
         console.error(chalk.red(error instanceof Error ? error.message : String(error)));
@@ -66,6 +70,7 @@ export function registerReportCommand(program) {
 }
 
 function buildReportMarkdown({ fromName, toName, fromFileName, toFileName, fromResult, toResult }) {
+  const toBeNotice = resolveToBeNotice(toResult);
   const asIsWeb = fromResult?.web ?? toResult?.asIs?.web ?? null;
   const asIsRn = fromResult?.rn ?? toResult?.asIs?.rn ?? null;
   const toBeWeb = toResult?.estimatedMetrics?.web ?? toResult?.web ?? toResult?.toBe?.web ?? null;
@@ -145,7 +150,7 @@ function buildReportMarkdown({ fromName, toName, fromFileName, toFileName, fromR
   return [
     `# Perf Report: ${fromName} -> ${toName}`,
     '',
-    '⚠️ to-be 수치는 AI 추정치이며 실측값이 아닙니다',
+    toBeNotice,
     '',
     `- as-is source: results/${fromFileName}`,
     `- to-be source: results/${toFileName}`,
@@ -169,6 +174,24 @@ function buildReportMarkdown({ fromName, toName, fromFileName, toFileName, fromR
     ...patchLines,
     '',
   ].join('\n');
+}
+
+function resolveToBeNotice(toResult) {
+  const hasEstimatedMetrics =
+    toResult &&
+    typeof toResult === 'object' &&
+    Object.prototype.hasOwnProperty.call(toResult, 'estimatedMetrics');
+
+  if (hasEstimatedMetrics) {
+    return '⚠️ to-be 수치는 AI 추정치이며 실측값이 아닙니다';
+  }
+
+  const hasMeasuredMetrics = Boolean(toResult?.web || toResult?.rn);
+  if (hasMeasuredMetrics) {
+    return '✅ to-be 수치는 실제 측정값입니다';
+  }
+
+  return '⚠️ to-be 수치는 AI 추정치이며 실측값이 아닙니다';
 }
 
 function buildMetricRow(target, metric, asIsRaw, toBeRaw, lowerIsBetter) {
