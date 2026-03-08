@@ -14,6 +14,7 @@ export function registerReportCommand(program) {
     .description('Generate markdown/pdf comparison report')
     .requiredOption('--from <name>', 'Source measure name (e.g. as-is)')
     .requiredOption('--to <name>', 'Target measure name (e.g. to-be)')
+    .option('--optimize <name>', 'Optimize result name to source plan/risks/patches')
     .option('--project <name>', 'Project name for resolving result files')
     .option('--format <types>', 'Output formats (comma separated)', 'md,pdf')
     .action(async (options) => {
@@ -30,10 +31,18 @@ export function registerReportCommand(program) {
           inputName: options.to,
           projectName,
         });
+        const optimizeTarget = options.optimize
+          ? await resolveResultJsonFile({
+              resultsDir,
+              inputName: options.optimize,
+              projectName,
+            })
+          : null;
 
-        const [fromResult, toResult] = await Promise.all([
+        const [fromResult, toResult, optimizeResult] = await Promise.all([
           readJsonFile(fromTarget.filePath),
           readJsonFile(toTarget.filePath),
+          optimizeTarget ? readJsonFile(optimizeTarget.filePath) : Promise.resolve(null),
         ]);
 
         const markdown = buildReportMarkdown({
@@ -43,6 +52,8 @@ export function registerReportCommand(program) {
           toFileName: toTarget.fileName,
           fromResult,
           toResult,
+          optimizeFileName: optimizeTarget?.fileName ?? null,
+          optimizeResult,
         });
 
         const reportsDir = path.resolve('reports');
@@ -69,12 +80,22 @@ export function registerReportCommand(program) {
     });
 }
 
-function buildReportMarkdown({ fromName, toName, fromFileName, toFileName, fromResult, toResult }) {
+function buildReportMarkdown({
+  fromName,
+  toName,
+  fromFileName,
+  toFileName,
+  fromResult,
+  toResult,
+  optimizeFileName,
+  optimizeResult,
+}) {
   const toBeNotice = resolveToBeNotice(toResult);
   const asIsWeb = fromResult?.web ?? toResult?.asIs?.web ?? null;
   const asIsRn = fromResult?.rn ?? toResult?.asIs?.rn ?? null;
   const toBeWeb = toResult?.estimatedMetrics?.web ?? toResult?.web ?? toResult?.toBe?.web ?? null;
   const toBeRn = toResult?.estimatedMetrics?.rn ?? toResult?.rn ?? toResult?.toBe?.rn ?? null;
+  const planSource = optimizeResult ?? toResult;
 
   const metricRows = [];
 
@@ -120,9 +141,9 @@ function buildReportMarkdown({ fromName, toName, fromFileName, toFileName, fromR
     ),
   ];
 
-  const plan = Array.isArray(toResult?.plan) ? toResult.plan : [];
-  const risks = Array.isArray(toResult?.risks) ? toResult.risks : [];
-  const patches = Array.isArray(toResult?.patches) ? toResult.patches : [];
+  const plan = Array.isArray(planSource?.plan) ? planSource.plan : [];
+  const risks = Array.isArray(planSource?.risks) ? planSource.risks : [];
+  const patches = Array.isArray(planSource?.patches) ? planSource.patches : [];
 
   const planLines =
     plan.length === 0
@@ -154,6 +175,7 @@ function buildReportMarkdown({ fromName, toName, fromFileName, toFileName, fromR
     '',
     `- as-is source: results/${fromFileName}`,
     `- to-be source: results/${toFileName}`,
+    optimizeFileName ? `- optimize source: results/${optimizeFileName}` : null,
     `- as-is createdAt: ${asIsCreated}`,
     `- to-be createdAt: ${toBeCreated}`,
     '',
@@ -173,7 +195,7 @@ function buildReportMarkdown({ fromName, toName, fromFileName, toFileName, fromR
     '',
     ...patchLines,
     '',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 function resolveToBeNotice(toResult) {
