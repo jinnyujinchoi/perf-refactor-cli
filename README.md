@@ -1,7 +1,7 @@
 # perf-refactor-cli
 
-> Web(Lighthouse) 성능을 측정하고, AI가 개선 패치를 제안/적용해 as-is → to-be 비교 리포트(md/pdf)를 자동 생성하는 CLI 도구
-
+> Web(Lighthouse) 성능을 측정하고, AI가 개선 패치를 제안/적용해
+as-is → to-be 비교 리포트(md/pdf)를 자동 생성하는 CLI 도구 ⚒️
 ---
 
 ## 설치 방법
@@ -33,8 +33,8 @@ GEMINI_MODEL=gemini-2.5-flash
 성능 최적화를 위한 권장 순서입니다.
 
 ```
-1️⃣. measure   →   2️⃣. optimize   →   3️⃣. measure   →   4️⃣. report
-  (as-is 측정)     (AI 패치 적용)     (to-be 재측정)    (비교 리포트)
+1️⃣ measure   →   2️⃣ optimize   →   3️⃣ measure   →   4️⃣ report
+  (as-is 측정)    (AI 패치 적용)      (to-be 재측정)     (비교 리포트)
 ```
 
 ### Step 1. as-is 측정
@@ -164,7 +164,11 @@ npm run start -- report \
 
 생성되는 리포트는 아래 섹션으로 구성됩니다.
 
+### 0. 리포트 예시 📄
+[📄 샘플 리포트 다운로드](docs/sample-report.pdf)
+
 ### 1. 헤더
+![header](docs/screenshots/01-header.png)
 
 ```
 ✅ to-be 수치는 실제 측정값입니다
@@ -175,6 +179,7 @@ npm run start -- report \
 측정 소스, 생성 시각 등 메타 정보 포함
 
 ### 2. Metrics Comparison
+![metrics](docs/screenshots/02-metrics.png)
 
 as-is / to-be / Δ(delta) 비교 테이블
 
@@ -186,14 +191,17 @@ as-is / to-be / Δ(delta) 비교 테이블
 | Web | CLS | 0 | 0 | 0 |
 
 ### 3. Plan
+![plan](docs/screenshots/03-plan.png)
 
 AI가 제안한 개선 항목 목록 (제목 / 근거 / 대상 지표)
 
 ### 4. Risks
+![risks](docs/screenshots/04-risks.png)
 
 패치 적용 시 고려해야 할 리스크 목록
 
 ### 5. Patches
+![patches](docs/screenshots/05-patches.png)
 
 생성된 패치 파일 목록 (파일명 / diff 파일 경로)
 
@@ -244,9 +252,9 @@ perf-refactor-cli/
 ## 향후 업데이트 계획
 
 ### V2 (진행 중)
-- [✅] 파일명 버전 관리 (타임스탬프 + 프로젝트명 자동 인식)
-- [✅] 소스코드 컨텍스트 기반 AI 패치 퀄리티 향상
-- [✅] 패치 자동 적용 + 롤백 루프
+- [x] 파일명 버전 관리 (타임스탬프 + 프로젝트명 자동 인식)
+- [x] 소스코드 컨텍스트 기반 AI 패치 퀄리티 향상
+- [x] 패치 자동 적용 + 롤백 루프
 - [ ] `--latest` 옵션 (최신 as-is/to-be 자동 선택)
 
 ### V3 (예정)
