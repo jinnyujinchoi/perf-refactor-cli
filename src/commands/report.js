@@ -2,6 +2,11 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
 import { mdToPdf } from 'md-to-pdf';
+import {
+  buildVersionedReportTarget,
+  resolveProjectName,
+  resolveResultJsonFile,
+} from '../utils/naming.js';
 
 export function registerReportCommand(program) {
   program
@@ -9,40 +14,64 @@ export function registerReportCommand(program) {
     .description('Generate markdown/pdf comparison report')
     .requiredOption('--from <name>', 'Source measure name (e.g. as-is)')
     .requiredOption('--to <name>', 'Target measure name (e.g. to-be)')
+    .option('--optimize <name>', 'Optimize result name to source plan/risks/patches')
+    .option('--project <name>', 'Project name for resolving result files')
     .option('--format <types>', 'Output formats (comma separated)', 'md,pdf')
     .action(async (options) => {
       try {
-        const fromPath = path.resolve('results', `${options.from}.json`);
-        const toPath = path.resolve('results', `${options.to}.json`);
+        const resultsDir = path.resolve('results');
+        const projectName = await resolveProjectName(options.project);
+        const fromTarget = await resolveResultJsonFile({
+          resultsDir,
+          inputName: options.from,
+          projectName,
+        });
+        const toTarget = await resolveResultJsonFile({
+          resultsDir,
+          inputName: options.to,
+          projectName,
+        });
+        const optimizeTarget = options.optimize
+          ? await resolveResultJsonFile({
+              resultsDir,
+              inputName: options.optimize,
+              projectName,
+            })
+          : null;
 
-        const [fromResult, toResult] = await Promise.all([
-          readJsonFile(fromPath),
-          readJsonFile(toPath),
+        const [fromResult, toResult, optimizeResult] = await Promise.all([
+          readJsonFile(fromTarget.filePath),
+          readJsonFile(toTarget.filePath),
+          optimizeTarget ? readJsonFile(optimizeTarget.filePath) : Promise.resolve(null),
         ]);
 
         const markdown = buildReportMarkdown({
-          fromName: options.from,
-          toName: options.to,
+          fromName: fromTarget.baseName,
+          toName: toTarget.baseName,
+          fromFileName: fromTarget.fileName,
+          toFileName: toTarget.fileName,
           fromResult,
           toResult,
+          optimizeFileName: optimizeTarget?.fileName ?? null,
+          optimizeResult,
         });
 
         const reportsDir = path.resolve('reports');
-        await fs.mkdir(reportsDir, { recursive: true });
-
-        const baseName = `${options.from}-${options.to}`;
-        const mdPath = path.join(reportsDir, `${baseName}.md`);
-        await fs.writeFile(mdPath, markdown, 'utf8');
-        console.log(chalk.green(`Markdown report saved: ${mdPath}`));
+        const reportTarget = await buildVersionedReportTarget({
+          reportsDir,
+          fromBaseName: fromTarget.baseName,
+          toBaseName: toTarget.baseName,
+        });
+        await fs.writeFile(reportTarget.mdPath, markdown, 'utf8');
+        console.log(chalk.green(`Markdown report saved: ${reportTarget.mdPath}`));
 
         const formats = parseFormats(options.format);
         if (formats.has('pdf')) {
-          const pdfPath = path.join(reportsDir, `${baseName}.pdf`);
-          const pdfResult = await mdToPdf({ path: mdPath }, { dest: pdfPath });
+          const pdfResult = await mdToPdf({ path: reportTarget.mdPath }, { dest: reportTarget.pdfPath });
           if (!pdfResult?.filename) {
             throw new Error('PDF conversion failed.');
           }
-          console.log(chalk.green(`PDF report saved: ${pdfPath}`));
+          console.log(chalk.green(`PDF report saved: ${reportTarget.pdfPath}`));
         }
       } catch (error) {
         console.error(chalk.red(error instanceof Error ? error.message : String(error)));
@@ -51,11 +80,22 @@ export function registerReportCommand(program) {
     });
 }
 
-function buildReportMarkdown({ fromName, toName, fromResult, toResult }) {
+function buildReportMarkdown({
+  fromName,
+  toName,
+  fromFileName,
+  toFileName,
+  fromResult,
+  toResult,
+  optimizeFileName,
+  optimizeResult,
+}) {
+  const toBeNotice = resolveToBeNotice(toResult);
   const asIsWeb = fromResult?.web ?? toResult?.asIs?.web ?? null;
   const asIsRn = fromResult?.rn ?? toResult?.asIs?.rn ?? null;
   const toBeWeb = toResult?.estimatedMetrics?.web ?? toResult?.web ?? toResult?.toBe?.web ?? null;
   const toBeRn = toResult?.estimatedMetrics?.rn ?? toResult?.rn ?? toResult?.toBe?.rn ?? null;
+  const planSource = optimizeResult ?? toResult;
 
   const metricRows = [];
 
@@ -101,9 +141,9 @@ function buildReportMarkdown({ fromName, toName, fromResult, toResult }) {
     ),
   ];
 
-  const plan = Array.isArray(toResult?.plan) ? toResult.plan : [];
-  const risks = Array.isArray(toResult?.risks) ? toResult.risks : [];
-  const patches = Array.isArray(toResult?.patches) ? toResult.patches : [];
+  const plan = Array.isArray(planSource?.plan) ? planSource.plan : [];
+  const risks = Array.isArray(planSource?.risks) ? planSource.risks : [];
+  const patches = Array.isArray(planSource?.patches) ? planSource.patches : [];
 
   const planLines =
     plan.length === 0
@@ -131,10 +171,11 @@ function buildReportMarkdown({ fromName, toName, fromResult, toResult }) {
   return [
     `# Perf Report: ${fromName} -> ${toName}`,
     '',
-    '⚠️ to-be 수치는 AI 추정치이며 실측값이 아닙니다',
+    toBeNotice,
     '',
-    `- as-is source: results/${fromName}.json`,
-    `- to-be source: results/${toName}.json`,
+    `- as-is source: results/${fromFileName}`,
+    `- to-be source: results/${toFileName}`,
+    optimizeFileName ? `- optimize source: results/${optimizeFileName}` : null,
     `- as-is createdAt: ${asIsCreated}`,
     `- to-be createdAt: ${toBeCreated}`,
     '',
@@ -154,7 +195,25 @@ function buildReportMarkdown({ fromName, toName, fromResult, toResult }) {
     '',
     ...patchLines,
     '',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
+}
+
+function resolveToBeNotice(toResult) {
+  const hasEstimatedMetrics =
+    toResult &&
+    typeof toResult === 'object' &&
+    Object.prototype.hasOwnProperty.call(toResult, 'estimatedMetrics');
+
+  if (hasEstimatedMetrics) {
+    return '⚠️ to-be 수치는 AI 추정치이며 실측값이 아닙니다';
+  }
+
+  const hasMeasuredMetrics = Boolean(toResult?.web || toResult?.rn);
+  if (hasMeasuredMetrics) {
+    return '✅ to-be 수치는 실제 측정값입니다';
+  }
+
+  return '⚠️ to-be 수치는 AI 추정치이며 실측값이 아닙니다';
 }
 
 function buildMetricRow(target, metric, asIsRaw, toBeRaw, lowerIsBetter) {
